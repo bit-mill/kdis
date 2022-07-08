@@ -714,25 +714,20 @@ KINT32 Connection::Receive( KOCTET * Buffer, KUINT32 BufferSz, KString * SenderI
 
 //////////////////////////////////////////////////////////////////////////
 
-unique_ptr<Header> Connection::GetNextPDU( KString * SenderIp /* = 0 */ ) 
-{
+unique_ptr<Header> Connection::GetNextPDU( KString * SenderIp /* = 0 */ ) {
     // Are we currently dealing with a PDU Bundle, if so then dont read any new data.
-    if( m_stream.GetBufferSize() == 0 )
-    {
+    if( m_stream.GetBufferSize() == 0 ) {
         // Get some new data from the network
         // Create a buffer to store network data
         KOCTET Buffer[MAX_PDU_SIZE];
         KINT32 iSz = Receive( Buffer, MAX_PDU_SIZE, &m_sLastIP );
 
-        if( iSz )
-        {
+        if( iSz ) {
             // Fire the first event, this event can also be used to inform us if we should stop
             vector<ConnectionSubscriber*>::iterator itr = m_vpSubscribers.begin();
             vector<ConnectionSubscriber*>::iterator itrEnd = m_vpSubscribers.end();
-            for( ; itr != itrEnd; ++itr )
-            {
-                if( !( *itr )->OnDataReceived( Buffer, iSz, m_sLastIP ) )
-                {
+            for( ; itr != itrEnd; ++itr ) {
+                if( !( *itr )->OnDataReceived( Buffer, iSz, m_sLastIP ) ) {
                     // We should quit
                     return unique_ptr<Header>();
                 }
@@ -745,29 +740,30 @@ unique_ptr<Header> Connection::GetNextPDU( KString * SenderIp /* = 0 */ )
     }
 
     // Now process the stream
-    if( m_stream.GetBufferSize() > 0 )
-    {
+    if( m_stream.GetBufferSize() > 0 ) {
         // Do they want the IP address returned?
-        if( SenderIp )
-        {
+        if( SenderIp ) {
             *SenderIp = m_sLastIP;
         }
 
         // Get the current write position
         KUINT16 currentPos = m_stream.GetCurrentWritePosition();
 
-        try
-        {
+        try {
             // Get the next/only PDU from the stream
             unique_ptr<Header> pdu = m_pPduFact->Decode( m_stream );
 
-            // If the PDU was decoded successfully then fire the next event
-            if( pdu.get() )
-            {
+            // If the PDU was decoded successfully then fire the next event.
+            // PDU isn't always successfully decoded. When currentPos==42, the PDU
+            // type is taken from the upper 8 bits of the z axis velocity vector
+            // so when this value matches a valid PDU enum, it eventually throws
+            // the Invalid Data error MOST of the time. So "currentPos != 42" is
+            // dirty hack. This happens on the second pass of GetNextPDU in the
+            // byte stream.
+            if( currentPos != 42 && pdu.get() ) {
                 vector<ConnectionSubscriber*>::iterator itr = m_vpSubscribers.begin();
                 vector<ConnectionSubscriber*>::iterator itrEnd = m_vpSubscribers.end();
-                for( ; itr != itrEnd; ++itr )
-                {
+                for( ; itr != itrEnd; ++itr ) {
                     ( *itr )->OnPDUReceived( pdu.get() );
                 }
 
@@ -777,17 +773,13 @@ unique_ptr<Header> Connection::GetNextPDU( KString * SenderIp /* = 0 */ )
 
                 // Now return the decoded pdu
                 return pdu;
-            }
-            else
-            {
+            } else {
                 // If a PDU could not be decoded in the PDU bundle, then we need to throw
                 // out the whole stream. There is no way to know where the next PDU might start
                 // in the data stream.
                 m_stream.Clear();
             }
-        }
-        catch( const exception & e )
-        {
+        } catch( const exception & e ) {
             // Something went wrong, the stream is likely corrupted now so wipe it or we will have issues in the next GetNextPDU call.
             m_stream.Clear();
             throw;
